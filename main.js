@@ -1,8 +1,16 @@
+/*
+script to parse xls file and make pdfs list of unique reference
+numbers
+*/
+if (!process.argv[2]) {
+    console.error('provide file name as argument')
+    process.exit(1);
+}
 const xlsx = require("xlsx");
 const fs = require('fs/promises');
 const pdfmake = require('pdfmake');
 //reading the xls file
-const workbook = xlsx.readFile("./fullrd.xls")
+const workbook = xlsx.readFile(process.argv[2])
 const fonts = {
     Roboto: {
         normal: 'fonts/Manrope-Regular.ttf',
@@ -12,7 +20,9 @@ const fonts = {
     }
 };
 pdfmake.addFonts(fonts);
+//this object contains all the parsed info
 const installments = workbook.Sheets.RDInstallmentReport;
+//columns
 let start = 14;
 const c_refno = "D"
 const c_acno = "F"
@@ -24,7 +34,8 @@ const c_reb = "N"
 const c_df = "O"
 const c_time = "W"
 const c_suc = "V"
-const c_fin_amt ="C"
+const c_fin_amt = "C"
+//to create an object for each person
 class Per {
     constructor(refno, name, acno, deffee, time, reb, amt, deno, inst) {
         this.refno = refno;
@@ -38,73 +49,91 @@ class Per {
         this.inst = inst;
     }
 }
-const list_arrays = {
-    ref_array : [], //contains all reference numbers
-};
+
 function in_ret(pre) {
     return installments[`${pre}${start}`]?.v;
 }
+
+//main object to systematically store parsed data
+//according to each ref no
+const list_arrays = {
+    ref_array: [], //contains all reference numbers
+};
+
 while (in_ret(c_refno)?.startsWith('C')) {
     if (!list_arrays.ref_array.includes(in_ret(c_refno))) {
         list_arrays.ref_array.push(in_ret(c_refno)); //pushing reference number
         list_arrays[in_ret(c_refno)] = []; //creating an empty array for storing each person details for each ref no
     }
     //creating object and pushing into respective subarray
-    let temp = new Per(
-        in_ret(c_refno),
-        in_ret(c_name),
-        in_ret(c_acno),
-        in_ret(c_df),
-        in_ret(c_time),
-        in_ret(c_reb),
-        in_ret(c_amt),
-        in_ret(c_deno),
-        in_ret(c_inst)
+    list_arrays[in_ret(c_refno)].push(
+        new Per(
+            in_ret(c_refno),
+            in_ret(c_name),
+            in_ret(c_acno),
+            in_ret(c_df),
+            in_ret(c_time),
+            in_ret(c_reb),
+            in_ret(c_amt),
+            in_ret(c_deno),
+            in_ret(c_inst)
+        )
     );
-    list_arrays[in_ret(c_refno)].push(temp);
     start++;
 }
+
 const tot_recs = start - 1;
+
 start++ //to skip total amount line
 
 while (in_ret(c_fin_amt)?.startsWith('C')) {
     list_arrays[`amt-${in_ret(c_fin_amt)}`] = in_ret('J');
     start++
 }
-
-const docdef = {
-    content : [
-        {
-            table : {
-                body: [
-                    ["reference no", "name", "account num", "amount", "created time"]
-                ]
-            }
-        }
-    ]
-}
-
+//declarative way of creating pdfs
 class TableTemp {
     constructor(arr, refno, totamt, time) {
         this.content = [
-            `Agent Id : DOP.MIG0027447`,
-            `List Reference No: ${refno}`,
-            `Total Amount: ${totamt}`,
-            `Created Time: ${time}`,
-        ];
-        this.content.push({
-            table: {
-                body: [
-                    ["Account Name", "Account No.","Denomination", "Installments", "Rebate", "Default Fee", "Total Deposit amount" ]
+            {
+                columns: [
+                    {
+                        //col2
+                        image: "./assets/logo.png",
+                        width: 140,
+                        margin: 20,
+                    },
+                    {
+                        text: `Agent Id : DOP.MIG0027447\nList Reference No: ${refno}\nTotal Amount: ${totamt}\nCreated Time: ${time}`,
+                        margin: 20,
+                        bold: true,
+
+                    },
                 ]
+            },
+            {
+                table: {
+                    body: [
+                        ["Account Name", "Account No.", "Denomination", "Installments", "Rebate", "Default Fee", "Total Deposit amount"]
+                    ]
+                }
             }
-        }
-        )
-        this.content[this.content.length-1].table.body.push(...arr);
+        ]
+        //refering to the last element
+        this.content[this.content.length - 1].table.body.push(...arr);
     }
 }
 
-let now = new Date();
+/*
+list array format
+{
+    ref_array : [refno1, refno2,...],
+    ref_no1 : [
+        per1, per2,...
+    ],
+    'amt-ref_no' : amount
+}
+*/
+let now = new Date(); //for measuring compilation time
 const ref_array = list_arrays.ref_array;
 async function create_lists() {
     //runs for each ref no
@@ -117,6 +146,7 @@ async function create_lists() {
         })
         console.log(list_arrays[`amt-${ref_array[item]}`], ref_array[item])
         let pdf = await pdfmake.createPdf(new TableTemp(temp, ref_array[item], list_arrays[`amt-${ref_array[item]}`], list_arrays[ref_array[item]][0].time));
+        //creating empty file
         await fs.writeFile(`pdfs/${ref_array[item]}-${item}.pdf`, '');
         try {
             await pdf.write(`pdfs/${ref_array[item]}-${item}.pdf`);
@@ -126,7 +156,7 @@ async function create_lists() {
     }
 }
 
-create_lists().then(()=>{
-    console.log(`processed a total of ${tot_recs -14} names and ${ref_array.length} lists`);
-    console.log(`took ${(Date.now() - now)/1000} secs`);
+create_lists().then(() => {
+    console.log(`processed a total of ${tot_recs - 14} names and ${ref_array.length} lists`);
+    console.log(`took ${(Date.now() - now) / 1000} secs`);
 })

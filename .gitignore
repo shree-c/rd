@@ -1,3 +1,4 @@
 pdfs/*
 fonts/*
 node_modules/*
+*.xls
